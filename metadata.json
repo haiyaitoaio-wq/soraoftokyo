@@ -1,0 +1,5 @@
+{
+  "name": "Letra卸事業部注文シート",
+  "description": "An application to register product codes and names, and then search for products by either their code or name.",
+  "requestFramePermissions": []
+}
