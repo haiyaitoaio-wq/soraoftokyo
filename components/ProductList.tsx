@@ -6,9 +6,10 @@ interface ProductListProps {
   products: Product[];
   onProductSelect: (product: Product, quantity: number) => void;
   onImageClick: (imageUrl: string) => void;
+  isLoading: boolean;
 }
 
-const ProductList: React.FC<ProductListProps> = ({ products, onProductSelect, onImageClick }) => {
+const ProductList: React.FC<ProductListProps> = ({ products, onProductSelect, onImageClick, isLoading }) => {
   const [quantities, setQuantities] = useState<{ [key: number]: number }>({});
 
   const handleQuantityChange = (productId: number, value: string) => {
@@ -23,6 +24,14 @@ const ProductList: React.FC<ProductListProps> = ({ products, onProductSelect, on
     const quantity = quantities[product.id] || 1;
     onProductSelect(product, quantity);
   };
+
+  if (isLoading) {
+    return (
+        <div className="text-center py-20 px-6">
+            <div className="text-slate-500">商品を読み込んでいます...</div>
+        </div>
+    );
+  }
 
   return (
     <div className="mt-8 flow-root">

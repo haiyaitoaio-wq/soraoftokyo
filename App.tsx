@@ -1,108 +1,94 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Product, SelectedProduct } from './types';
 import ProductForm from './components/ProductForm';
 import ProductList from './components/ProductList';
 import SelectedProductList from './components/SelectedProductList';
-import { SearchIcon, BoxIcon, CogIcon, XMarkIcon, ExclamationTriangleIcon } from './components/icons';
+import { SearchIcon, BoxIcon, CogIcon, XMarkIcon, ExclamationTriangleIcon, LockClosedIcon } from './components/icons';
+import * as api from './api';
+import { NewProductPayload, UpdatableProductData } from './api';
 
 type NewProduct = { code: string; name: string; name2: string; sizeCode: string; };
 
-const initialProducts: Product[] = [
-  { id: 1, code: 'SKU-001', name: 'オーガニックコットンTシャツ', name2: '半袖', sizeCode: 'M', imageUrl: '' },
-  { id: 2, code: 'SKU-002', name: 'リネンブレンドパンツ', name2: 'アンクル丈', sizeCode: 'L', imageUrl: '' },
-  { id: 3, code: 'SKU-003', name: 'シルクカシミヤセーター', name2: '', sizeCode: 'S', imageUrl: '' },
-  { id: 4, code: 'ACC-001', name: 'レザーベルト', name2: 'バックル', sizeCode: 'FREE', imageUrl: '' },
-  { id: 5, code: 'ACC-002', name: 'ウールマフラー', name2: '', sizeCode: '', imageUrl: '' },
-  { id: 6, code: 'BG-010', name: 'BAG ROMBO', name2: 'BLK XS', sizeCode: 'XS', imageUrl: '' },
-];
-
 const App: React.FC = () => {
-  const [products, setProducts] = useState<Product[]>(initialProducts);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProducts, setSelectedProducts] = useState<SelectedProduct[]>([]);
   const [isRegistrationModalOpen, setRegistrationModalOpen] = useState(false);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
-  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
   const [isDeleteAllConfirmOpen, setDeleteAllConfirmOpen] = useState(false);
+  const [isPasswordPromptOpen, setPasswordPromptOpen] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [passwordError, setPasswordError] = useState('');
 
-  const handleAddProduct = (newProduct: NewProduct): boolean => {
+  const fetchProducts = useCallback(async () => {
+    // Keep loading true if it's already true, otherwise set it for re-fetches
+    setIsLoading(prev => prev || true);
+    try {
+        const fetchedProducts = await api.getProducts();
+        setProducts(fetchedProducts);
+    } catch (error) {
+        console.error("Failed to fetch products:", error);
+    } finally {
+        setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchProducts();
+  }, [fetchProducts]);
+
+  useEffect(() => {
+    // Sync selected products when the main product list changes (e.g., after an edit/delete)
+    setSelectedProducts(prevSelected => {
+      const productMap = new Map(products.map(p => [p.id, p]));
+      return prevSelected
+        .map(sp => {
+          const updatedProduct = productMap.get(sp.id);
+          // If product still exists, update its details from the master list
+          return updatedProduct ? { ...updatedProduct, quantity: sp.quantity } : null;
+        })
+        .filter((p): p is SelectedProduct => p !== null); // Filter out products that were deleted
+    });
+  }, [products]);
+
+
+  const handleAddProduct = async (newProduct: NewProductPayload): Promise<boolean> => {
     const codeTrimmed = newProduct.code.trim();
-    // 商品コードが入力されている場合のみ重複チェック
     if (codeTrimmed && products.some(p => p.code.toLowerCase() === codeTrimmed.toLowerCase())) {
         return false;
     }
-    setProducts(prevProducts => [
-      ...prevProducts,
-      {
-        id: Date.now(),
-        ...newProduct,
-        imageUrl: '',
-      },
-    ]);
+    await api.addProduct(newProduct);
+    await fetchProducts();
     return true;
   };
 
-  const handleBulkAddProducts = (newProducts: NewProduct[]) => {
-    const existingCodes = new Set(products.map(p => p.code ? p.code.toLowerCase() : '').filter(Boolean));
-    const productsToAdd: Product[] = [];
-    const duplicateCodes: string[] = [];
-    let latestId = Date.now();
-
-    newProducts.forEach(np => {
-      const lowercasedCode = np.code.toLowerCase();
-      // 商品コードが存在する場合のみ重複チェック
-      if (lowercasedCode && existingCodes.has(lowercasedCode)) {
-        duplicateCodes.push(np.code);
-      } else {
-        productsToAdd.push({
-           id: ++latestId,
-           ...np,
-           imageUrl: '',
-        });
-        // 重複チェックセットにもコードが存在する場合のみ追加
-        if (lowercasedCode) {
-          existingCodes.add(lowercasedCode);
-        }
-      }
-    });
-
-    if(productsToAdd.length > 0) {
-      setProducts(prev => [...prev, ...productsToAdd]);
-    }
-
+  const handleBulkAddProducts = async (newProducts: NewProductPayload[]) => {
+    const result = await api.addProducts(newProducts);
+    await fetchProducts();
     return {
-      successCount: productsToAdd.length,
-      duplicateCodes: duplicateCodes,
+        successCount: result.addedProducts.length,
+        duplicateCodes: result.duplicateCodes,
     };
   };
 
-  const handleDeleteProduct = (productId: number) => {
-    const product = products.find(p => p.id === productId);
-    if (product) {
-      setProductToDelete(product);
-    }
+  const handleDeleteProduct = async (productId: number) => {
+    await api.deleteProduct(productId);
+    await fetchProducts();
   };
   
+  const handleDeleteSelectedProducts = async (productIds: number[]) => {
+    await api.deleteProducts(productIds);
+    await fetchProducts();
+  };
+
   const handleDeleteAllProductsClick = () => {
     setDeleteAllConfirmOpen(true);
   };
 
-  const confirmDeleteProduct = () => {
-    if (!productToDelete) return;
-
-    setProducts(prevProducts => prevProducts.filter(p => p.id !== productToDelete.id));
-    setSelectedProducts(prevSelected => prevSelected.filter(p => p.id !== productToDelete.id));
-    
-    setProductToDelete(null);
-  };
-
-  const cancelDeleteProduct = () => {
-    setProductToDelete(null);
-  };
-
-  const confirmDeleteAllProducts = () => {
-    setProducts([]);
-    setSelectedProducts([]);
+  const confirmDeleteAllProducts = async () => {
+    await api.deleteAllProducts();
+    await fetchProducts();
     setDeleteAllConfirmOpen(false);
   };
 
@@ -110,51 +96,30 @@ const App: React.FC = () => {
     setDeleteAllConfirmOpen(false);
   };
 
-  const handleUpdateProduct = (productId: number, updatedData: { code: string; name: string; name2: string; sizeCode: string; }): boolean => {
-    const codeTrimmed = updatedData.code.trim();
-    // 商品コードが入力されている場合のみ重複チェック
+  const handleUpdateProduct = async (productId: number, updatedData: UpdatableProductData): Promise<boolean> => {
+    const codeTrimmed = updatedData.code?.trim();
     if (codeTrimmed) {
         const isDuplicate = products.some(p => 
             p.id !== productId && p.code.toLowerCase() === codeTrimmed.toLowerCase()
         );
-
         if (isDuplicate) {
             return false;
         }
     }
-
-    setProducts(prevProducts =>
-        prevProducts.map(p =>
-            p.id === productId ? { ...p, ...updatedData } : p
-        )
-    );
-    setSelectedProducts(prevSelected =>
-        prevSelected.map(p =>
-            p.id === productId ? { ...p, ...updatedData, quantity: p.quantity } : p
-        )
-    );
+    await api.updateProduct(productId, updatedData);
+    await fetchProducts();
     return true;
   };
 
-  const handleUpdateProductImage = (productId: number, imageUrl: string) => {
-    setProducts(prevProducts =>
-      prevProducts.map(p =>
-        p.id === productId ? { ...p, imageUrl } : p
-      )
-    );
-    setSelectedProducts(prevSelected =>
-      prevSelected.map(p =>
-        p.id === productId ? { ...p, imageUrl } : p
-      )
-    );
+  const handleUpdateProductImage = async (productId: number, imageUrl: string) => {
+    await api.updateProduct(productId, { imageUrl });
+    await fetchProducts();
   };
 
   const handleSelectProduct = (product: Product, quantity: number) => {
     setSelectedProducts(prevSelected => {
       const existingProductIndex = prevSelected.findIndex(p => p.id === product.id);
-
       if (existingProductIndex > -1) {
-        // Product already in list, so update quantity
         const updatedSelected = [...prevSelected];
         const existingProduct = updatedSelected[existingProductIndex];
         updatedSelected[existingProductIndex] = {
@@ -163,7 +128,6 @@ const App: React.FC = () => {
         };
         return updatedSelected;
       } else {
-        // Product not in list, add it
         return [...prevSelected, { ...product, quantity }];
       }
     });
@@ -187,6 +151,19 @@ const App: React.FC = () => {
 
   const handleCloseImageView = () => {
     setViewingImage(null);
+  };
+
+  const handlePasswordSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (passwordInput === '9910') {
+      setPasswordError('');
+      setPasswordInput('');
+      setPasswordPromptOpen(false);
+      setRegistrationModalOpen(true);
+    } else {
+      setPasswordError('パスワードが正しくありません。');
+      setPasswordInput('');
+    }
   };
 
   const filteredProducts = useMemo(() => {
@@ -213,11 +190,11 @@ const App: React.FC = () => {
         <div className="max-w-screen-2xl mx-auto py-4 px-4 sm:px-6 lg:px-8 flex items-center justify-between">
             <div className="flex items-center gap-3">
                 <BoxIcon className="w-8 h-8 text-sky-600" />
-                <h1 className="text-2xl font-bold tracking-tight text-slate-900">商品管理アプリ</h1>
+                <h1 className="text-2xl font-bold tracking-tight text-slate-900">Letra卸事業部注文シート</h1>
             </div>
             <div>
                 <button
-                    onClick={() => setRegistrationModalOpen(true)}
+                    onClick={() => setPasswordPromptOpen(true)}
                     className="flex items-center gap-2 bg-white text-slate-600 font-semibold py-2 px-4 rounded-lg border border-slate-300 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 transition-all duration-200 ease-in-out"
                     aria-label="商品登録フォームを開く"
                 >
@@ -251,6 +228,7 @@ const App: React.FC = () => {
                 products={filteredProducts} 
                 onProductSelect={handleSelectProduct}
                 onImageClick={handleImageView}
+                isLoading={isLoading}
               />
             </div>
           </div>
@@ -294,6 +272,7 @@ const App: React.FC = () => {
                 onAddProducts={handleBulkAddProducts} 
                 products={products}
                 onDeleteProduct={handleDeleteProduct}
+                onDeleteSelectedProducts={handleDeleteSelectedProducts}
                 onUpdateProduct={handleUpdateProduct}
                 onUpdateProductImage={handleUpdateProductImage}
                 onDeleteAllProducts={handleDeleteAllProductsClick}
@@ -341,43 +320,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {productToDelete && (
-        <div 
-            className="fixed inset-0 bg-slate-900/70 flex justify-center items-center z-60 p-4" 
-            role="dialog" 
-            aria-modal="true" 
-            aria-labelledby="delete-confirm-title"
-        >
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-8 transform transition-all text-center">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-red-100">
-              <ExclamationTriangleIcon className="h-8 w-8 text-red-600" aria-hidden="true" />
-            </div>
-            <h3 id="delete-confirm-title" className="text-xl font-bold text-slate-800 mt-5">商品を削除</h3>
-            <p className="text-slate-600 mt-2">
-              「<span className="font-semibold">{productToDelete.name}</span>」を完全に削除します。
-              <br />
-              この操作は元に戻せません。よろしいですか？
-            </p>
-            <div className="mt-8 flex justify-center gap-4">
-              <button 
-                type="button" 
-                onClick={cancelDeleteProduct} 
-                className="bg-white text-slate-700 font-semibold py-2.5 px-6 rounded-lg border border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 transition-all duration-200"
-              >
-                キャンセル
-              </button>
-              <button 
-                type="button" 
-                onClick={confirmDeleteProduct} 
-                className="bg-red-600 text-white font-semibold py-2.5 px-6 rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-all duration-200"
-              >
-                削除する
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {isDeleteAllConfirmOpen && (
         <div 
             className="fixed inset-0 bg-slate-900/70 flex justify-center items-center z-60 p-4" 
@@ -411,6 +353,50 @@ const App: React.FC = () => {
                 すべて削除
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {isPasswordPromptOpen && (
+        <div className="fixed inset-0 bg-slate-900/70 flex justify-center items-center z-60 p-4" role="dialog" aria-modal="true" aria-labelledby="password-prompt-title">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-8 transform transition-all text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-sky-100">
+              <LockClosedIcon className="h-8 w-8 text-sky-600" aria-hidden="true" />
+            </div>
+            <h3 id="password-prompt-title" className="text-xl font-bold text-slate-800 mt-5">管理者パスワード</h3>
+            <p className="text-slate-600 mt-2">
+              管理者用ページにアクセスするにはパスワードを入力してください。
+            </p>
+            <form onSubmit={handlePasswordSubmit} className="mt-6 space-y-4">
+              <input
+                type="password"
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                className="w-full text-center px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition duration-150 ease-in-out"
+                placeholder="••••••••"
+                autoFocus
+              />
+              {passwordError && <p className="text-sm text-red-600">{passwordError}</p>}
+              <div className="mt-6 flex justify-center gap-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                      setPasswordPromptOpen(false);
+                      setPasswordError('');
+                      setPasswordInput('');
+                  }}
+                  className="bg-white text-slate-700 font-semibold py-2.5 px-6 rounded-lg border border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 transition-all duration-200"
+                >
+                  キャンセル
+                </button>
+                <button
+                  type="submit"
+                  className="bg-sky-600 text-white font-semibold py-2.5 px-6 rounded-lg hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 transition-all duration-200"
+                >
+                  認証
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
